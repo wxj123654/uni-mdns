@@ -1,10 +1,7 @@
 /**
  * iOS mDNS 服务发现 UTS 插件实现
- * 使用 Bonjour API 实现 mDNS 服务发现功能
- *
- * 架构说明（参考 uni-registerRequestPermissionTips）：
- * 使用监听器注册模式，通过全局变量存储监听器引用
- * 避免 UTS 回调函数被 GC 释放的问题
+ * 使用 Foundation framework 的 NetServiceBrowser 实现 mDNS 服务发现功能
+ * NetServiceBrowser 是 Apple 传统的 Bonjour API，成熟稳定
  */
 
 import {
@@ -23,33 +20,39 @@ import {
 
 import { MdnsApiFailImpl } from '../unierror';
 
-// 引入 iOS 相关类
-import NetService from 'Foundation.NetService';
-import NetServiceBrowser from 'Foundation.NetServiceBrowser';
-import NetServiceDelegate from 'Foundation.NetServiceDelegate';
-import Data from 'Foundation.Data';
-import NSString from 'Foundation.NSString';
-import NSNumber from 'Foundation.NSNumber';
+// 引入 Foundation framework (Bonjour API)
+import { NetService, NetServiceBrowser, NetServiceDelegate, NetServiceBrowserDelegate, Data, NSObject, Selector } from "Foundation";
 
 /**
  * 全局扫描状态管理
  */
 let isDiscovering: boolean = false;
-let netServiceBrowser: NetServiceBrowser | null = null;
 let currentServiceType: string | null = null;
+var serviceBrowser: NetServiceBrowser | null = null;
 
 /**
- * 全局监听器引用（参考 uni-registerRequestPermissionTips 的设计）
+ * 全局监听器引用
  * 用于存储用户注册的回调函数，避免被 GC 释放
  */
 var listener: MdnsDiscoveryListener | null = null;
+
+/**
+ * 全局代理对象引用（避免被 GC）
+ */
+var browserDelegate: MDnsBrowserDelegate | null = null;
+var resolveDelegates: Map<string, MDnsResolveDelegate> = new Map();
+
+/**
+ * 待解析的服务列表
+ */
+var pendingResolveServices: Map<string, NetService> = new Map();
 
 /**
  * 触发服务发现回调
  */
 function notifyServiceFound(service: DiscoveredService): void {
   if (listener != null) {
-    listener!.onServiceFound?.invoke(service);
+    listener!.onServiceFound?.(service);
   }
 }
 
@@ -58,7 +61,231 @@ function notifyServiceFound(service: DiscoveredService): void {
  */
 function notifyServiceLost(service: DiscoveredService): void {
   if (listener != null) {
-    listener!.onServiceLost?.invoke(service);
+    listener!.onServiceLost?.(service);
+  }
+}
+
+/**
+ * 解析 TXT 记录数据
+ * 注意：由于 UTS 对 Swift Data 类型访问有限，暂时返回 null
+ */
+function parseTxtRecord(data: Data): Map<string, string> | null {
+  // TODO: TXT 记录解析需要更复杂的 Swift 互操作
+  // 目前先返回 null，后续可以考虑使用 NetService.dictionaryFromTXTRecord
+  return null;
+}
+
+/**
+ * 内部解析服务方法
+ */
+function resolveServiceInternal(service: NetService): void {
+  const serviceKey = `${service.name}.${service.type}`;
+
+  // 检查是否已经在解析
+  if (pendingResolveServices.has(serviceKey)) {
+    return;
+  }
+
+  // 保存服务引用
+  pendingResolveServices.set(serviceKey, service);
+
+  // 创建代理对象
+  const resolveDelegate = new MDnsResolveDelegate(service, service.name ?? '', service.type ?? '');
+
+  // 保存代理引用
+  resolveDelegates.set(serviceKey, resolveDelegate);
+
+  // 设置代理
+  service.delegate = resolveDelegate;
+
+  // 开始解析（超时 5 秒）
+  service.resolve(withTimeout = 5.0);
+}
+
+/**
+ * NetServiceBrowser 代理类
+ * 继承 NSObject 并实现 NetServiceBrowserDelegate 协议
+ */
+@UTSJS.keepAlive
+class MDnsBrowserDelegate extends NSObject implements NetServiceBrowserDelegate {
+  @UTSiOS.override constructor() {
+    super.init();
+  }
+
+  /**
+   * 发现服务时调用
+   * Swift: netServiceBrowser(_ browser:didFind:moreComing:)
+   */
+  @objc netServiceBrowser(@argumentLabel("") browser: NetServiceBrowser, @argumentLabel("didFind") service: NetService, moreComing: boolean): void {
+    const serviceName = service.name;
+    const serviceType = service.type;
+    console.log(`[mDNS iOS] Service found: ${serviceName}, type: ${serviceType}`);
+
+    // 先发送基本信息
+    const basicService: DiscoveredService = {
+      name: serviceName ?? '',
+      type: serviceType ?? currentServiceType ?? '',
+      port: 0,
+      hostName: null,
+      hostAddress: null,
+      txtRecords: null
+    };
+    notifyServiceFound(basicService);
+
+    // 自动解析服务获取详细信息
+    resolveServiceInternal(service);
+  }
+
+  /**
+   * 服务丢失时调用
+   * Swift: netServiceBrowser(_ browser:didRemove:moreComing:)
+   */
+  @objc netServiceBrowser(@argumentLabel("") browser: NetServiceBrowser, @argumentLabel("didRemove") service: NetService, moreComing: boolean): void {
+    const serviceName = service.name;
+    const serviceType = service.type;
+    console.log(`[mDNS iOS] Service lost: ${serviceName}`);
+
+    const lostService: DiscoveredService = {
+      name: serviceName ?? '',
+      type: serviceType ?? currentServiceType ?? '',
+      port: 0,
+      hostName: null,
+      hostAddress: null,
+      txtRecords: null
+    };
+    notifyServiceLost(lostService);
+
+    // 清理待解析的服务
+    const serviceKey = `${serviceName}.${serviceType}`;
+    pendingResolveServices.delete(serviceKey);
+    resolveDelegates.delete(serviceKey);
+  }
+
+  /**
+   * 搜索开始时调用
+   * Swift: netServiceBrowserDidStartSearching(_ browser:)
+   */
+  @objc netServiceBrowserDidStartSearching(@argumentLabel("") browser: NetServiceBrowser): void {
+    console.log('[mDNS iOS] Browser started searching');
+    isDiscovering = true;
+  }
+
+  /**
+   * 搜索停止时调用
+   * Swift: netServiceBrowserDidStopSearch(_ browser:)
+   */
+  @objc netServiceBrowserDidStopSearch(@argumentLabel("") browser: NetServiceBrowser): void {
+    console.log('[mDNS iOS] Browser stopped searching');
+    isDiscovering = false;
+  }
+
+  /**
+   * 搜索失败时调用
+   * Swift: netServiceBrowser(_ browser:didNotSearch:)
+   */
+  @objc netServiceBrowser(@argumentLabel("") browser: NetServiceBrowser, @argumentLabel("didNotSearch") error: Map<string, any>): void {
+    console.error('[mDNS iOS] Browser search failed');
+    isDiscovering = false;
+  }
+}
+
+/**
+ * NetService 解析代理类
+ * 继承 NSObject 并实现 NetServiceDelegate 协议
+ */
+@UTSJS.keepAlive
+class MDnsResolveDelegate extends NSObject implements NetServiceDelegate {
+  private service: NetService | null = null;
+  private serviceName: string = '';
+  private serviceType: string = '';
+
+  @UTSiOS.override constructor(svc: NetService, name: string, type: string) {
+    super.init();
+    this.service = svc;
+    this.serviceName = name;
+    this.serviceType = type;
+  }
+
+  /**
+   * 服务解析成功时调用
+   * Swift: netServiceDidResolveAddress(_ sender:)
+   */
+  @objc netServiceDidResolveAddress(@argumentLabel("") sender: NetService): void {
+    const serviceName = sender.name ?? this.serviceName;
+    const serviceType = sender.type ?? this.serviceType;
+    const port = sender.port;
+
+    // 获取主机地址
+    let hostName: string | null = null;
+    let hostAddress: string | null = null;
+
+    const addresses = sender.addresses;
+    if (addresses != null) {
+      const addrList = addresses!;
+      if (addrList.count > 0) {
+        // 遍历地址获取 IPv4 地址
+        for (const addr of addrList) {
+          const addrStr = addr.description ?? '';
+          // 查找 IPv4 地址
+          if (addrStr.includes('.')) {
+            hostAddress = addrStr;
+            break;
+          }
+        }
+      }
+    }
+
+    // 获取主机名
+    const host = sender.hostName;
+    if (host != null) {
+      hostName = host;
+    }
+
+    // 获取 TXT 记录
+    let txtRecords: Map<string, string> | null = null;
+    const txtData = sender.txtRecordData();
+    if (txtData != null) {
+      txtRecords = parseTxtRecord(txtData!);
+    }
+
+    const resolvedService: DiscoveredService = {
+      name: serviceName,
+      type: serviceType,
+      port: port,
+      hostName: hostName,
+      hostAddress: hostAddress,
+      txtRecords: txtRecords
+    };
+
+    console.log(`[mDNS iOS] Service resolved: ${serviceName}, host: ${hostAddress}, port: ${port}`);
+    notifyServiceFound(resolvedService);
+
+    // 清理
+    const serviceKey = `${serviceName}.${serviceType}`;
+    pendingResolveServices.delete(serviceKey);
+    resolveDelegates.delete(serviceKey);
+  }
+
+  /**
+   * 服务解析失败时调用
+   * Swift: netService(_ sender:didNotResolve:)
+   */
+  @objc netService(@argumentLabel("") sender: NetService, @argumentLabel("didNotResolve") error: Map<string, any>): void {
+    console.error(`[mDNS iOS] Service resolve failed: ${sender.name}`);
+    // 清理
+    const serviceKey = `${sender.name}.${sender.type}`;
+    pendingResolveServices.delete(serviceKey);
+    resolveDelegates.delete(serviceKey);
+  }
+
+  /**
+   * 服务停止时调用
+   * Swift: netServiceDidStop(_ sender:)
+   */
+  @objc netServiceDidStop(@argumentLabel("") sender: NetService): void {
+    const serviceKey = `${sender.name}.${sender.type}`;
+    pendingResolveServices.delete(serviceKey);
+    resolveDelegates.delete(serviceKey);
   }
 }
 
@@ -69,7 +296,7 @@ function notifyServiceLost(service: DiscoveredService): void {
 @UTSJS.keepAlive
 export function registerMdnsDiscoveryListener(l: MdnsDiscoveryListener | null): void {
   listener = l;
-  console.log('[mDNS] Listener registered');
+  console.log('[mDNS iOS] Listener registered');
 }
 
 /**
@@ -79,138 +306,7 @@ export function registerMdnsDiscoveryListener(l: MdnsDiscoveryListener | null): 
 @UTSJS.keepAlive
 export function unregisterMdnsDiscoveryListener(l: MdnsDiscoveryListener | null): void {
   listener = null;
-  console.log('[mDNS] Listener unregistered');
-}
-
-/**
- * NetServiceBrowserDelegate 实现类
- */
-class MDnsBrowserDelegate implements NetServiceDelegate {
-  override netServiceDidPublish(sender: NetService): void {
-    // 服务发布成功（用于服务端）
-  }
-
-  override netServiceDidStop(sender: NetService): void {
-    // 服务停止
-  }
-
-  override netServiceDidResolveAddress(sender: NetService): void {
-    // 解析服务地址成功
-    console.log(`[mDNS] Service resolved: ${sender.name}`);
-
-    const service: DiscoveredService = {
-      name: sender.name,
-      type: sender.type,
-      port: sender.port,
-      hostName: sender.hostName,
-      hostAddress: null,
-      txtRecords: null
-    };
-
-    // 获取 IP 地址
-    const addresses = sender.addresses;
-    if (addresses != null && addresses.count > 0) {
-      // 尝试获取 IPv4 地址
-      for (let i = 0; i < addresses.count; i++) {
-        const addr = addresses.object(at = i);
-        // 简化处理，实际需要解析 sockaddr 结构
-        service.hostAddress = addr?.description ?? null;
-        if (service.hostAddress != null) {
-          break;
-        }
-      }
-    }
-
-    // 获取 TXT 记录
-    const txtData = sender.txtRecordData;
-    if (txtData != null) {
-      const txtMap = new Map<string, string>();
-      // 解析 TXT 记录
-      const txtDict = NetService.dictionaryFromTXTRecord(txtData);
-      if (txtDict != null) {
-        const keys = txtDict.allKeys;
-        if (keys != null) {
-          for (let i = 0; i < keys.count; i++) {
-            const key = keys.object(at = i) as string;
-            const valueData = txtDict.objectForKey(key) as Data | null;
-            if (valueData != null) {
-              const valueStr = NSString.alloc().initWithData(valueData, encoding = 4); // NSUTF8StringEncoding
-              txtMap.set(key, valueStr ?? '');
-            }
-          }
-        }
-      }
-      if (txtMap.size > 0) {
-        service.txtRecords = txtMap;
-      }
-    }
-
-    // 通过监听器回调
-    notifyServiceFound(service);
-  }
-
-  override netServiceDidNotPublish(sender: NetService, errorDict: Map<string, any>): void {
-    console.error(`[mDNS] Service did not publish: ${errorDict}`);
-  }
-
-  override netServiceDidNotResolve(sender: NetService, errorDict: Map<string, any>): void {
-    console.error(`[mDNS] Service did not resolve: ${errorDict}`);
-  }
-}
-
-/**
- * NetServiceBrowser 事件处理
- */
-class MDnsBrowserEvents {
-  static onServiceFound(service: NetService): void {
-    console.log(`[mDNS] Service found: ${service.name}`);
-
-    // 先发送基本信息
-    const basicService: DiscoveredService = {
-      name: service.name,
-      type: service.type,
-      port: 0,
-      hostName: null,
-      hostAddress: null,
-      txtRecords: null
-    };
-    notifyServiceFound(basicService);
-
-    // 自动解析服务获取详细信息
-    service.delegate = new MDnsBrowserDelegate();
-    service.resolve(withTimeout = 5.0);
-  }
-
-  static onServiceRemoved(service: NetService): void {
-    console.log(`[mDNS] Service removed: ${service.name}`);
-
-    const lostService: DiscoveredService = {
-      name: service.name,
-      type: service.type,
-      port: 0,
-      hostName: null,
-      hostAddress: null,
-      txtRecords: null
-    };
-    notifyServiceLost(lostService);
-  }
-
-  static onSearchStarted(): void {
-    console.log(`[mDNS] Search started`);
-  }
-
-  static onSearchStopped(): void {
-    console.log(`[mDNS] Search stopped`);
-    isDiscovering = false;
-    netServiceBrowser = null;
-    currentServiceType = null;
-  }
-
-  static onSearchNotStarted(errorDict: Map<string, any>): void {
-    console.error(`[mDNS] Search not started: ${errorDict}`);
-    isDiscovering = false;
-    netServiceBrowser = null;
-  }
+  console.log('[mDNS iOS] Listener unregistered');
 }
 
 /**
@@ -237,14 +333,21 @@ export function startDiscovery(options: StartDiscoveryOptions): void {
     return;
   }
 
-  // 创建 NetServiceBrowser
-  netServiceBrowser = NetServiceBrowser.alloc().init();
   currentServiceType = serviceType;
 
   try {
+    // 创建 NetServiceBrowser
+    serviceBrowser = new NetServiceBrowser();
+
+    // 创建代理对象
+    browserDelegate = new MDnsBrowserDelegate();
+
+    // 设置代理
+    serviceBrowser!.delegate = browserDelegate;
+
     // 开始搜索服务
-    // 注意：实际实现需要设置 delegate 并处理回调
-    // netServiceBrowser.searchForServices(ofType: serviceType, inDomain: "local.");
+    // 参数：服务类型、域
+    serviceBrowser!.searchForServices(ofType = serviceType, inDomain = "local.");
 
     isDiscovering = true;
 
@@ -254,11 +357,12 @@ export function startDiscovery(options: StartDiscoveryOptions): void {
     };
     options.success?.(result);
     options.complete?.(result);
-  } catch (e: Exception) {
+  } catch (e) {
     isDiscovering = false;
-    netServiceBrowser = null;
+    serviceBrowser = null;
     currentServiceType = null;
 
+    console.error(`[mDNS iOS] startDiscovery exception: ${e}`);
     const err = new MdnsApiFailImpl(9010003);
     options.fail?.(err);
     options.complete?.(err);
@@ -271,7 +375,7 @@ export function startDiscovery(options: StartDiscoveryOptions): void {
  */
 export const stopDiscovery: StopDiscovery = function (options: StopDiscoveryOptions): void {
   // 检查是否有正在进行的扫描
-  if (!isDiscovering || netServiceBrowser == null) {
+  if (!isDiscovering || serviceBrowser == null) {
     const err = new MdnsApiFailImpl(9010004);
     options.fail?.(err);
     options.complete?.(err);
@@ -279,10 +383,13 @@ export const stopDiscovery: StopDiscovery = function (options: StopDiscoveryOpti
   }
 
   try {
-    netServiceBrowser!.stop();
+    serviceBrowser!.stop();
     isDiscovering = false;
-    netServiceBrowser = null;
+    serviceBrowser = null;
+    browserDelegate = null;
     currentServiceType = null;
+    pendingResolveServices.clear();
+    resolveDelegates.clear();
 
     const result: StopDiscoveryResult = {
       success: true,
@@ -290,7 +397,7 @@ export const stopDiscovery: StopDiscovery = function (options: StopDiscoveryOpti
     };
     options.success?.(result);
     options.complete?.(result);
-  } catch (e: Exception) {
+  } catch (e) {
     const err = new MdnsApiFailImpl(9010003);
     options.fail?.(err);
     options.complete?.(err);
@@ -302,27 +409,26 @@ export const stopDiscovery: StopDiscovery = function (options: StopDiscoveryOpti
  * @param options 解析选项
  */
 export const resolveService: ResolveService = function (options: ResolveServiceOptions): void {
-  // 创建 NetService 用于解析
-  const netService = NetService.alloc().initWithDomain("local.", type = options.serviceType, name = options.serviceName);
-  netService.delegate = new MDnsBrowserDelegate();
-
   try {
-    netService.resolve(withTimeout = 5.0);
+    // 创建 NetService 用于解析
+    const service = new NetService(domain = "local.", type = options.serviceType, name = options.serviceName);
 
-    // 解析结果通过 delegate 回调
-    const result: ResolveServiceResult = {
-      service: {
-        name: options.serviceName,
-        type: options.serviceType,
-        port: netService.port,
-        hostName: netService.hostName,
-        hostAddress: null,
-        txtRecords: null
-      }
-    };
-    options.success?.(result);
-    options.complete?.(result);
-  } catch (e: Exception) {
+    // 创建代理
+    const delegate = new MDnsResolveDelegate(service, options.serviceName, options.serviceType);
+
+    // 设置代理
+    service.delegate = delegate;
+
+    // 保存引用
+    const serviceKey = `${options.serviceName}.${options.serviceType}`;
+    pendingResolveServices.set(serviceKey, service);
+    resolveDelegates.set(serviceKey, delegate);
+
+    // 开始解析
+    service.resolve(withTimeout = 5.0);
+
+  } catch (e) {
+    console.error(`[mDNS iOS] resolveService exception: ${e}`);
     const err = new MdnsApiFailImpl(9010005);
     options.fail?.(err);
     options.complete?.(err);
