@@ -1,0 +1,165 @@
+/**
+ * interface.uts
+ * mDNS 服务发现插件接口定义文件
+ *
+ * 使用监听器注册模式（参考 uni-registerRequestPermissionTips）：
+ * - 通过 registerMdnsDiscoveryListener 注册监听器
+ * - 通过 unregisterMdnsDiscoveryListener 注销监听器
+ * - 避免回调函数被 GC 释放的问题
+ */
+
+/**
+ * 发现的服务信息
+ */
+export type DiscoveredService = {
+  /** 服务名称 */
+  name: string,
+  /** 服务类型，如 "_http._tcp." */
+  type: string,
+  /** 主机名 */
+  hostName?: string | null,
+  /** IP 地址 */
+  hostAddress?: string | null,
+  /** 端口号 */
+  port: number,
+  /** TXT 记录 */
+  txtRecords?: Map<string, string> | null
+}
+
+/**
+ * mDNS 发现监听器
+ * 参考 RequestPermissionTipsListener 的设计模式
+ */
+export type MdnsDiscoveryListener = {
+  /** 发现服务时触发 */
+  onServiceFound?: ((service: DiscoveredService) => void) | null,
+  /** 服务丢失时触发 */
+  onServiceLost?: ((service: DiscoveredService) => void) | null
+}
+
+/**
+ * 注册 mDNS 发现监听器
+ * @param listener 监听器对象，包含 onServiceFound 和 onServiceLost 回调
+ */
+export type RegisterMdnsDiscoveryListener = (listener: MdnsDiscoveryListener | null) => void
+
+/**
+ * 注销 mDNS 发现监听器
+ * @param listener 要注销的监听器（可选，传 null 则注销当前注册的监听器）
+ */
+export type UnregisterMdnsDiscoveryListener = (listener: MdnsDiscoveryListener | null) => void
+
+/**
+ * startDiscovery 参数选项
+ */
+export type StartDiscoveryOptions = {
+  /** 要发现的服务类型，如 "_http._tcp."，默认扫描所有服务 */
+  serviceType?: string | null,
+  /** 开始扫描成功回调（单次触发） */
+  success?: ((res: StartDiscoveryResult) => void) | null,
+  /** 失败回调（单次触发） */
+  fail?: ((res: MdnsApiFail) => void) | null,
+  /** 完成回调（单次触发） */
+  complete?: ((res: any) => void) | null
+}
+
+/**
+ * startDiscovery 返回结果
+ */
+export type StartDiscoveryResult = {
+  /** 是否成功启动 */
+  success: boolean,
+  /** 提示信息 */
+  message: string
+}
+
+/**
+ * stopDiscovery 参数选项
+ */
+export type StopDiscoveryOptions = {
+  /** 成功回调 */
+  success?: ((res: StopDiscoveryResult) => void) | null,
+  /** 失败回调 */
+  fail?: ((res: MdnsApiFail) => void) | null,
+  /** 完成回调 */
+  complete?: ((res: any) => void) | null
+}
+
+/**
+ * stopDiscovery 返回结果
+ */
+export type StopDiscoveryResult = {
+  /** 是否成功停止 */
+  success: boolean,
+  /** 提示信息 */
+  message: string
+}
+
+/**
+ * resolveService 参数选项
+ */
+export type ResolveServiceOptions = {
+  /** 服务名称 */
+  serviceName: string,
+  /** 服务类型 */
+  serviceType: string,
+  /** 成功回调 */
+  success?: ((res: ResolveServiceResult) => void) | null,
+  /** 失败回调 */
+  fail?: ((res: MdnsApiFail) => void) | null,
+  /** 完成回调 */
+  complete?: ((res: any) => void) | null
+}
+
+/**
+ * resolveService 返回结果
+ */
+export type ResolveServiceResult = {
+  /** 服务信息 */
+  service: DiscoveredService
+}
+
+/**
+ * 错误码定义
+ * - 9010001 mDNS 服务未初始化
+ * - 9010002 已经在扫描中
+ * - 9010003 扫描启动失败
+ * - 9010004 没有正在进行的扫描
+ * - 9010005 服务解析失败
+ * - 9010006 服务类型无效
+ */
+export type MdnsApiErrorCode = 9010001 | 9010002 | 9010003 | 9010004 | 9010005 | 9010006;
+
+/**
+ * mDNS API 错误回调参数
+ */
+export interface MdnsApiFail extends IUniError {
+  errCode: MdnsApiErrorCode
+}
+
+/**
+ * startDiscovery 异步函数定义
+ */
+export type StartDiscovery = (options: StartDiscoveryOptions) => void
+
+/**
+ * stopDiscovery 异步函数定义
+ */
+export type StopDiscovery = (options: StopDiscoveryOptions) => void
+
+/**
+ * resolveService 异步函数定义
+ */
+export type ResolveService = (options: ResolveServiceOptions) => void
+
+/**
+ * Uni 接口定义
+ * 将方法挂载到 uni 对象上
+ */
+export interface Uni {
+  registerMdnsDiscoveryListener: RegisterMdnsDiscoveryListener,
+  unregisterMdnsDiscoveryListener: UnregisterMdnsDiscoveryListener,
+  startDiscovery: StartDiscovery,
+  stopDiscovery: StopDiscovery,
+  resolveService: ResolveService
+}

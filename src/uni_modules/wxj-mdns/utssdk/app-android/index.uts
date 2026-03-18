@@ -1,0 +1,422 @@
+/**
+ * Android mDNS 服务发现 UTS 插件实现
+ * 使用 Android NsdManager API 实现 mDNS 服务发现功能
+ *
+ * 架构说明（参考 uni-registerRequestPermissionTips）：
+ * 使用监听器注册模式，通过全局变量存储监听器引用
+ * 避免 UTS 回调函数被 GC 释放的问题
+ */
+
+import {
+  StartDiscoveryOptions,
+  StartDiscoveryResult,
+  StopDiscoveryOptions,
+  StopDiscoveryResult,
+  ResolveServiceOptions,
+  ResolveServiceResult,
+  DiscoveredService,
+  StartDiscovery,
+  StopDiscovery,
+  ResolveService,
+  MdnsDiscoveryListener
+} from '../interface.uts';
+
+import { MdnsApiFailImpl } from '../unierror';
+
+// 引入 Android 相关类 (UTS 语法：不使用花括号)
+import NsdManager from 'android.net.nsd.NsdManager';
+import NsdServiceInfo from 'android.net.nsd.NsdServiceInfo';
+import Context from 'android.content.Context';
+import Handler from 'android.os.Handler';
+import Looper from 'android.os.Looper';
+import Exception from 'java.lang.Exception';
+import Int from 'kotlin.Int';
+import Charset from 'java.nio.charset.Charset';
+import Runnable from 'java.lang.Runnable';
+
+/**
+ * 全局扫描状态管理
+ */
+let isDiscovering: boolean = false;
+let nsdManager: NsdManager | null = null;
+let currentDiscoveryListener: NsdManager.DiscoveryListener | null = null;
+let currentServiceType: string | null = null;
+
+/**
+ * 全局监听器引用（参考 uni-registerRequestPermissionTips 的设计）
+ * 用于存储用户注册的回调函数，避免被 GC 释放
+ */
+var listener: MdnsDiscoveryListener | null = null;
+
+/**
+ * 服务类型常量
+ */
+const PROTOCOL_DNS_SD: Int = 1 as Int; // NsdManager.PROTOCOL_DNS_SD
+
+/**
+ * 获取 NsdManager 实例
+ */
+function getNsdManager(): NsdManager | null {
+  if (nsdManager == null) {
+    nsdManager = UTSAndroid.getAppContext()?.getSystemService(Context.NSD_SERVICE) as NsdManager | null;
+  }
+  return nsdManager;
+}
+
+/**
+ * 将 NsdServiceInfo 转换为 DiscoveredService
+ */
+function convertServiceInfo(serviceInfo: NsdServiceInfo): DiscoveredService {
+  const serviceName = serviceInfo.getServiceName();
+  const serviceType = serviceInfo.getServiceType();
+  const service: DiscoveredService = {
+    name: serviceName != null ? serviceName.toString() : '',
+    type: serviceType != null ? serviceType.toString() : '',
+    port: serviceInfo.getPort(),
+    hostName: null,
+    hostAddress: null,
+    txtRecords: null
+  };
+
+  // 获取主机地址
+  const host = serviceInfo.getHost();
+  if (host != null) {
+    const hostName = host.getHostName();
+    const hostAddr = host.getHostAddress();
+    service.hostName = hostName != null ? hostName.toString() : null;
+    service.hostAddress = hostAddr != null ? hostAddr.toString() : null;
+  }
+
+  // 获取 TXT 记录
+  const txtRecords = serviceInfo.getAttributes();
+  if (txtRecords != null && txtRecords.size > 0) {
+    const txtMap = new Map<string, string>();
+    const utf8Charset = Charset.forName("UTF-8");
+    txtRecords.forEach((key: string, value: ByteArray | null) => {
+      if (value != null) {
+        // ByteArray 转字符串
+        const str = new String(value as ByteArray, utf8Charset);
+        txtMap.set(key, str.toString());
+      }
+    });
+    if (txtMap.size > 0) {
+      service.txtRecords = txtMap;
+    }
+  }
+
+  return service;
+}
+
+/**
+ * 触发服务发现回调
+ * 参考 uni-registerRequestPermissionTips 中 listener!.onRequest?.invoke() 的调用方式
+ */
+function notifyServiceFound(service: DiscoveredService): void {
+  if (listener != null) {
+    listener!.onServiceFound?.invoke(service);
+  }
+}
+
+/**
+ * 触发服务丢失回调
+ */
+function notifyServiceLost(service: DiscoveredService): void {
+  if (listener != null) {
+    listener!.onServiceLost?.invoke(service);
+  }
+}
+
+/**
+ * 注册 mDNS 发现监听器
+ * 参考 registerRequestPermissionTipsListener 的实现模式
+ * @param l 监听器对象
+ */
+@UTSJS.keepAlive
+export function registerMdnsDiscoveryListener(l: MdnsDiscoveryListener | null): void {
+  listener = l;
+  console.log('[mDNS] Listener registered');
+}
+
+/**
+ * 注销 mDNS 发现监听器
+ * 参考 unregisterRequestPermissionTipsListener 的实现模式
+ * @param l 监听器对象（可选）
+ */
+@UTSJS.keepAlive
+export function unregisterMdnsDiscoveryListener(l: MdnsDiscoveryListener | null): void {
+  listener = null;
+  console.log('[mDNS] Listener unregistered');
+}
+
+/**
+ * DiscoveryListener 实现类
+ * 通过监听器模式通知 JS 层，避免回调函数被 GC
+ */
+@UTSJS.keepAlive
+class MDnsDiscoveryListener implements NsdManager.DiscoveryListener {
+  override onDiscoveryStarted(serviceType: string): void {
+    console.log(`[mDNS] Discovery started for type: ${serviceType}`);
+  }
+
+  override onServiceFound(service: NsdServiceInfo): void {
+    const svcName = service.getServiceName();
+    const svcType = service.getServiceType();
+    console.log(`[mDNS] Service found: ${svcName}`);
+
+    // 发现服务时，先发送基本信息
+    const basicService: DiscoveredService = {
+      name: svcName != null ? svcName.toString() : '',
+      type: svcType != null ? svcType.toString() : '',
+      port: 0,
+      hostName: null,
+      hostAddress: null,
+      txtRecords: null
+    };
+
+    // 通过监听器回调
+    notifyServiceFound(basicService);
+
+    // 自动解析服务获取详细信息
+    resolveServiceInternal(service, (resolved: DiscoveredService) => {
+      // 解析成功后再次发送更新信息
+      notifyServiceFound(resolved);
+    }, null);
+  }
+
+  override onServiceLost(service: NsdServiceInfo): void {
+    const svcName = service.getServiceName();
+    const svcType = service.getServiceType();
+    console.log(`[mDNS] Service lost: ${svcName}`);
+
+    const lostService: DiscoveredService = {
+      name: svcName != null ? svcName.toString() : '',
+      type: svcType != null ? svcType.toString() : '',
+      port: 0,
+      hostName: null,
+      hostAddress: null,
+      txtRecords: null
+    };
+
+    // 通过监听器回调
+    notifyServiceLost(lostService);
+  }
+
+  override onDiscoveryStopped(serviceType: string): void {
+    console.log(`[mDNS] Discovery stopped: ${serviceType}`);
+    isDiscovering = false;
+    currentDiscoveryListener = null;
+    currentServiceType = null;
+  }
+
+  override onStartDiscoveryFailed(serviceType: string, errorCode: Int): void {
+    console.error(`[mDNS] Start discovery failed: ${errorCode}`);
+    isDiscovering = false;
+    currentDiscoveryListener = null;
+  }
+
+  override onStopDiscoveryFailed(serviceType: string, errorCode: Int): void {
+    console.error(`[mDNS] Stop discovery failed: ${errorCode}`);
+    isDiscovering = false;
+    currentDiscoveryListener = null;
+  }
+}
+
+/**
+ * ResolveListener 实现类
+ */
+@UTSJS.keepAlive
+class MDnsResolveListener implements NsdManager.ResolveListener {
+  private onSuccess: (service: DiscoveredService) => void;
+  private onFail: ((errorCode: Int) => void) | null;
+
+  constructor(
+    successCallback: (service: DiscoveredService) => void,
+    failCallback?: ((errorCode: Int) => void) | null
+  ) {
+    this.onSuccess = successCallback;
+    this.onFail = failCallback ?? null;
+  }
+
+  override onResolveFailed(service: NsdServiceInfo, errorCode: Int): void {
+    console.error(`[mDNS] Resolve failed: ${errorCode}`);
+    if (this.onFail != null) {
+      this.onFail(errorCode);
+    }
+  }
+
+  override onServiceResolved(resolvedService: NsdServiceInfo): void {
+    console.log(`[mDNS] Service resolved: ${resolvedService.getServiceName()}`);
+    const service = convertServiceInfo(resolvedService);
+    this.onSuccess(service);
+  }
+}
+
+/**
+ * 内部解析服务方法
+ */
+function resolveServiceInternal(
+  serviceInfo: NsdServiceInfo,
+  onSuccess: (service: DiscoveredService) => void,
+  onFail?: ((errorCode: Int) => void) | null
+): void {
+  const manager = getNsdManager();
+  if (manager == null) {
+    return;
+  }
+
+  const resolveListener = new MDnsResolveListener(onSuccess, onFail);
+
+  try {
+    manager.resolveService(serviceInfo, resolveListener);
+  } catch (e: Exception) {
+    console.error(`[mDNS] Resolve exception: ${e?.message ?? 'unknown'}`);
+  }
+}
+
+/**
+ * 开始 mDNS 服务发现
+ * @param options 扫描选项
+ */
+export function startDiscovery(
+  options: StartDiscoveryOptions
+): void {
+  const manager = getNsdManager();
+
+  // 检查 NsdManager 是否可用
+  if (manager == null) {
+    const err = new MdnsApiFailImpl(9010001);
+    options.fail?.(err);
+    options.complete?.(err);
+    return;
+  }
+
+  // 检查是否已经在扫描
+  if (isDiscovering) {
+    const err = new MdnsApiFailImpl(9010002);
+    options.fail?.(err);
+    options.complete?.(err);
+    return;
+  }
+
+  // 获取服务类型，默认扫描 HTTP 服务
+  const serviceType = options.serviceType ?? '_http._tcp.';
+
+  // 验证服务类型格式
+  if (serviceType == null || serviceType.length === 0) {
+    const err = new MdnsApiFailImpl(9010006);
+    options.fail?.(err);
+    options.complete?.(err);
+    return;
+  }
+
+  // 创建监听器
+  currentDiscoveryListener = new MDnsDiscoveryListener();
+  currentServiceType = serviceType;
+
+  try {
+    manager.discoverServices(serviceType, PROTOCOL_DNS_SD, currentDiscoveryListener!);
+    isDiscovering = true;
+
+    const result: StartDiscoveryResult = {
+      success: true,
+      message: `开始扫描服务类型: ${serviceType}`
+    };
+    options.success?.(result);
+    options.complete?.(result);
+  } catch (e: Exception) {
+    isDiscovering = false;
+    currentDiscoveryListener = null;
+    currentServiceType = null;
+
+    const err = new MdnsApiFailImpl(9010003);
+    options.fail?.(err);
+    options.complete?.(err);
+  }
+}
+
+/**
+ * 停止 mDNS 服务发现
+ * @param options 停止选项
+ */
+export const stopDiscovery: StopDiscovery = function (options: StopDiscoveryOptions): void {
+  const manager = getNsdManager();
+
+  // 检查是否有正在进行的扫描
+  if (!isDiscovering || manager == null || currentDiscoveryListener == null) {
+    const err = new MdnsApiFailImpl(9010004);
+    options.fail?.(err);
+    options.complete?.(err);
+    return;
+  }
+
+  try {
+    manager.stopServiceDiscovery(currentDiscoveryListener!);
+    isDiscovering = false;
+    currentDiscoveryListener = null;
+    currentServiceType = null;
+
+    const result: StopDiscoveryResult = {
+      success: true,
+      message: '扫描已停止'
+    };
+    options.success?.(result);
+    options.complete?.(result);
+  } catch (e: Exception) {
+    const err = new MdnsApiFailImpl(9010003);
+    options.fail?.(err);
+    options.complete?.(err);
+  }
+};
+
+/**
+ * 解析服务获取详细信息
+ * @param options 解析选项
+ */
+export const resolveService: ResolveService = function (options: ResolveServiceOptions): void {
+  const manager = getNsdManager();
+
+  // 检查 NsdManager 是否可用
+  if (manager == null) {
+    const err = new MdnsApiFailImpl(9010001);
+    options.fail?.(err);
+    options.complete?.(err);
+    return;
+  }
+
+  // 创建服务信息对象用于解析
+  const serviceInfo = new NsdServiceInfo();
+  serviceInfo.setServiceName(options.serviceName);
+  serviceInfo.setServiceType(options.serviceType);
+
+  resolveServiceInternal(
+    serviceInfo,
+    (service: DiscoveredService) => {
+      const result: ResolveServiceResult = {
+        service: service
+      };
+      options.success?.(result);
+      options.complete?.(result);
+    },
+    (errorCode: Int) => {
+      const err = new MdnsApiFailImpl(9010005);
+      options.fail?.(err);
+      options.complete?.(err);
+    }
+  );
+};
+
+/**
+ * 检查当前是否正在扫描
+ * @returns 是否正在扫描
+ */
+export const isScanning = function (): boolean {
+  return isDiscovering;
+};
+
+/**
+ * 获取当前扫描的服务类型
+ * @returns 当前服务类型或 null
+ */
+export const getCurrentServiceType = function (): string | null {
+  return currentServiceType;
+};

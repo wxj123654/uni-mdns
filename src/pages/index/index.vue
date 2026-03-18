@@ -49,5 +49,12 @@ onLoad(() => {
         https://unibest.tech
       </text>
     </view>
+
+    <!-- mDNS 演示入口 -->
+    <view class="mt-8 px-4">
+      <button type="primary" @click="uni.navigateTo({ url: '/pages/mdns/mdns' })">
+        mDNS 服务发现演示
+      </button>
+    </view>
   </view>
 </template>

@@ -1,0 +1,37 @@
+/**
+ * unierror.uts
+ * mDNS 服务发现插件错误定义
+ */
+import { MdnsApiErrorCode, MdnsApiFail } from "./interface.uts"
+
+/**
+ * 错误主题
+ */
+export const UniErrorSubject = 'wxj-mdns';
+
+/**
+ * 错误信息映射
+ */
+export const MdnsAPIErrors: Map<MdnsApiErrorCode, string> = new Map([
+  [9010001, 'mDNS 服务未初始化'],
+  [9010002, '已经在扫描中'],
+  [9010003, '扫描启动失败'],
+  [9010004, '没有正在进行的扫描'],
+  [9010005, '服务解析失败'],
+  [9010006, '服务类型无效'],
+]);
+
+/**
+ * 错误对象实现
+ */
+export class MdnsApiFailImpl extends UniError implements MdnsApiFail {
+  override errCode: MdnsApiErrorCode;
+
+  constructor(errCode: MdnsApiErrorCode) {
+    super();
+    this.errSubject = UniErrorSubject;
+    this.errCode = errCode;
+    const msg = MdnsAPIErrors.get(errCode);
+    this.errMsg = msg != null ? msg : "";
+  }
+}

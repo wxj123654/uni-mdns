@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.dcloud.uts.wxjmdns">
+
+    <!-- 网络权限 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- WiFi 状态访问权限 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+
+    <!-- WiFi 多播状态变更权限（mDNS 扫描必需） -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+
+    <!-- 访问网络状态权限 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+</manifest>

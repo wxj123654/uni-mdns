@@ -1,0 +1,159 @@
+import {
+  StartDiscoveryOptions,
+  StartDiscoveryResult,
+  StopDiscoveryOptions,
+  StopDiscoveryResult,
+  ResolveServiceOptions,
+  ResolveServiceResult,
+  DiscoveredService,
+  StartDiscovery,
+  StopDiscovery,
+  ResolveService,
+  MdnsDiscoveryListener
+} from '../interface.uts';
+
+import { MdnsApiFailImpl } from '../unierror';
+
+/**
+ * 全局扫描状态管理
+ */
+let isDiscovering: boolean = false;
+let currentServiceType: string | null = null;
+
+/**
+ * 全局监听器引用
+ */
+var listener: MdnsDiscoveryListener | null = null;
+
+/**
+ * 触发服务发现回调
+ */
+function notifyServiceFound(service: DiscoveredService): void {
+  if (listener != null) {
+    listener!.onServiceFound?.invoke(service);
+  }
+}
+
+/**
+ * 触发服务丢失回调
+ */
+function notifyServiceLost(service: DiscoveredService): void {
+  if (listener != null) {
+    listener!.onServiceLost?.invoke(service);
+  }
+}
+
+/**
+ * 注册 mDNS 发现监听器
+ * @param l 监听器对象
+ */
+@UTSJS.keepAlive
+export function registerMdnsDiscoveryListener(l: MdnsDiscoveryListener | null): void {
+  listener = l;
+  console.log('[mDNS] Listener registered');
+}
+
+/**
+ * 注销 mDNS 发现监听器
+ * @param l 监听器对象（可选）
+ */
+@UTSJS.keepAlive
+export function unregisterMdnsDiscoveryListener(l: MdnsDiscoveryListener | null): void {
+  listener = null;
+  console.log('[mDNS] Listener unregistered');
+}
+
+/**
+ * 开始 mDNS 服务发现
+ * @param options 扫描选项
+ *
+ * 使用方式：
+ * 1. 先调用 registerMdnsDiscoveryListener 注册监听器
+ * 2. 调用 startDiscovery 开始扫描
+ * 3. 通过监听器的 onServiceFound 回调接收发现的服务
+ * 4. 通过监听器的 onServiceLost 回调接收丢失的服务
+ */
+export function startDiscovery(options: StartDiscoveryOptions): void {
+  // 检查是否已经在扫描
+  if (isDiscovering) {
+    const err = new MdnsApiFailImpl(9010002);
+    options.fail?.(err);
+    options.complete?.(err);
+    return;
+  }
+
+  // 获取服务类型，默认扫描 HTTP 服务
+  const serviceType = options.serviceType ?? '_http._tcp.';
+
+  // 验证服务类型格式
+  if (serviceType == null || serviceType.length === 0) {
+    const err = new MdnsApiFailImpl(9010006);
+    options.fail?.(err);
+    options.complete?.(err);
+    return;
+  }
+
+  currentServiceType = serviceType;
+  isDiscovering = true;
+
+  // TODO: 实现 HarmonyOS mDNS 发现
+  // 参考: https://doc.dcloud.net.cn/uni-app-x/plugin/uts-for-harmony.html
+
+  const result: StartDiscoveryResult = {
+    success: true,
+    message: `开始扫描服务类型: ${serviceType}`
+  };
+  options.success?.(result);
+  options.complete?.(result);
+}
+
+/**
+ * 停止 mDNS 服务发现
+ * @param options 停止选项
+ */
+export const stopDiscovery: StopDiscovery = function (options: StopDiscoveryOptions): void {
+  // 检查是否有正在进行的扫描
+  if (!isDiscovering) {
+    const err = new MdnsApiFailImpl(9010004);
+    options.fail?.(err);
+    options.complete?.(err);
+    return;
+  }
+
+  isDiscovering = false;
+  currentServiceType = null;
+
+  const result: StopDiscoveryResult = {
+    success: true,
+    message: '扫描已停止'
+  };
+  options.success?.(result);
+  options.complete?.(result);
+};
+
+/**
+ * 解析服务获取详细信息
+ * @param options 解析选项
+ */
+export const resolveService: ResolveService = function (options: ResolveServiceOptions): void {
+  // TODO: 实现 HarmonyOS 服务解析
+  const err = new MdnsApiFailImpl(9010005);
+  options.fail?.(err);
+  options.complete?.(err);
+};
+
+/**
+ * 检查当前是否正在扫描
+ * @returns 是否正在扫描
+ */
+export const isScanning = function (): boolean {
+  return isDiscovering;
+};
+
+/**
+ * 获取当前扫描的服务类型
+ * @returns 当前服务类型或 null
+ */
+export const getCurrentServiceType = function (): string | null {
+  return currentServiceType;
+};
