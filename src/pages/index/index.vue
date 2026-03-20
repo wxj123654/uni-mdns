@@ -50,13 +50,16 @@ onLoad(() => {
       </text>
     </view>
 
-    <!-- mDNS 演示入口 -->
+    <!-- 功能演示入口 -->
     <view class="mt-8 px-4">
       <button type="primary" @click="uni.navigateTo({ url: '/pages/mdns/mdns' })">
         mDNS 服务发现演示
       </button>
       <button type="primary" @click="uni.navigateTo({ url: '/pages/wifi/wifi' })">
         wifi 服务发现演示
+      </button>
+      <button type="primary" @click="uni.navigateTo({ url: '/pages/ferry/ferry' })">
+        数据传输
       </button>
     </view>
   </view>
