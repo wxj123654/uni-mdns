@@ -1,6 +1,7 @@
 import Context from "android.content.Context";
 import WifiManager from "android.net.wifi.WifiManager";
 import WifiInfo from "android.net.wifi.WifiInfo";
+import DhcpInfo from "android.net.wifi.DhcpInfo";
 import Manifest from "android.Manifest";
 import PackageManager from "android.content.pm.PackageManager";
 import ScanResult from "android.net.wifi.ScanResult";
@@ -16,7 +17,7 @@ import TextUtils from 'android.text.TextUtils';
 import Build from 'android.os.Build';
 
 import { UniWifiResult, UniWifiInfoWithPartialInfo,GetConnectedWifiOptions, WifiConnectOption, GetWifiListOptions,
-StartWifiOptions, StopWifiOptions,UniWifiInfo,UniWifiCallback ,UniWifiResultCallback,UniWifiResultCallbackWithPartialInfo,UniGetWifiListCallback} from "../interface.uts"
+StartWifiOptions, StopWifiOptions,UniWifiInfo,UniWifiCallback ,UniWifiResultCallback,UniWifiResultCallbackWithPartialInfo,UniGetWifiListCallback, GetWifiGatewayOptions, UniWifiGatewayInfo, UniWifiGatewayResult} from "../interface.uts"
 import { WifiFailImpl, getErrcode,UniErrorSubject } from '../unierror';
 
 
@@ -800,4 +801,90 @@ export function getConnectedWifi(option : GetConnectedWifiOptions) {
 			option.fail?.(err)
 			option.complete?.(err)
 		}
+
+/**
+ * 将 int 类型的 IP 地址转换为字符串格式
+ * Android 的 DhcpInfo 中 IP 地址以 int 形式存储（小端序）
+ */
+function intToIpAddress(ip : number) : string {
+	if (ip == 0) {
+		return "";
+	}
+	// 小端序转换：低位在前
+	return ((ip & 0xFF) + "." + ((ip >> 8) & 0xFF) + "." + ((ip >> 16) & 0xFF) + "." + ((ip >> 24) & 0xFF));
+}
+
+/**
+ * 获取当前连接 WiFi 的网关信息
+ */
+export function getWifiGateway(option : GetWifiGatewayOptions) {
+
+	if (Global.mReceiver == null) {
+		// 还没调用startWifi 提示报错
+		let err = new WifiFailImpl(getErrcode(12000));
+		option.fail?.(err)
+		option.complete?.(err)
+		return
+	}
+
+	// 校验权限
+	if (ActivityCompat.checkSelfPermission(UTSAndroid.getUniActivity()!, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+		let err = new WifiFailImpl(getErrcode(12001));
+		option.fail?.(err)
+		option.complete?.(err)
+		return;
+	}
+
+	const context = UTSAndroid.getAppContext();
+	if (context == null) {
+		let err = new WifiFailImpl(getErrcode(12000));
+		option.fail?.(err)
+		option.complete?.(err)
+		return
+	}
+
+	const wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager;
+
+	// 检查 WiFi 是否开启
+	if (!wifiManager.isWifiEnabled()) {
+		let err = new WifiFailImpl(getErrcode(12005));
+		option.fail?.(err)
+		option.complete?.(err)
+		return
+	}
+
+	// 获取 DhcpInfo
+	const dhcpInfo = wifiManager.getDhcpInfo();
+
+	if (dhcpInfo == null) {
+		let err = new WifiFailImpl(getErrcode(12000));
+		option.fail?.(err)
+		option.complete?.(err)
+		return
+	}
+
+	// 获取连接信息
+	const wifiInfo = wifiManager.getConnectionInfo();
+
+	// 构建网关信息对象
+	let gatewayInfo : UniWifiGatewayInfo = {
+		gateway: intToIpAddress(dhcpInfo.gateway),
+		netmask: intToIpAddress(dhcpInfo.netmask),
+		dns1: intToIpAddress(dhcpInfo.dns1),
+		dns2: intToIpAddress(dhcpInfo.dns2),
+		serverAddress: intToIpAddress(dhcpInfo.serverAddress),
+		ipAddress: intToIpAddress(wifiInfo.getIpAddress()),
+		leaseDuration: dhcpInfo.leaseDuration
+	};
+
+	let result : UniWifiGatewayResult = {
+		errCode: 0,
+		errSubject: UniErrorSubject,
+		errMsg: "getWifiGateway:ok",
+		gatewayInfo: gatewayInfo
+	}
+
+	option.success?.(result)
+	option.complete?.(result)
+}
 
