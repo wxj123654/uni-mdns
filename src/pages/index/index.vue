@@ -55,6 +55,9 @@ onLoad(() => {
       <button type="primary" @click="uni.navigateTo({ url: '/pages/mdns/mdns' })">
         mDNS 服务发现演示
       </button>
+      <button type="primary" @click="uni.navigateTo({ url: '/pages/wifi/wifi' })">
+        wifi 服务发现演示
+      </button>
     </view>
   </view>
 </template>

@@ -99,10 +99,11 @@ export default function useMDns(options: UseMDnsOptions = {}): UseMDnsReturn {
 
   // 处理服务发现事件
   function handleServiceFound(service: DiscoveredService) {
-    addLog(`发现服务: ${service.name}`, 'success')
-
     // 检查是否已存在，避免重复
-    const index = services.value.findIndex(s => s.name === service.name && s.type === service.type)
+    const index = services.value.findIndex((s) => {
+      // type发现后和解析后可能不一样
+      return s.name === service.name
+    })
     if (index === -1) {
       services.value.push(service)
     }
