@@ -51,6 +51,38 @@ export type GetConnectedWifiOptions = {
 	complete ?: (res : any) => void
 }
 
+/**
+ * WiFi 网关信息
+ */
+export type UniWifiGatewayInfo = {
+	gateway : string;           // 网关地址
+	netmask ?: string;          // 子网掩码
+	dns1 ?: string;             // DNS服务器1
+	dns2 ?: string;             // DNS服务器2
+	serverAddress ?: string;    // 服务器地址
+	ipAddress ?: string;        // 本机IP地址
+	leaseDuration ?: number;    // 租约时长(秒)
+}
+
+/**
+ * 获取WiFi网关信息的参数
+ */
+export type GetWifiGatewayOptions = {
+	success ?: (res : UniWifiGatewayResult) => void
+	fail ?: (res : UniError) => void
+	complete ?: (res : any) => void
+}
+
+/**
+ * WiFi网关信息结果
+ */
+export type UniWifiGatewayResult = {
+	errCode : number,
+	errSubject : string,
+	errMsg : string,
+	gatewayInfo : UniWifiGatewayInfo | null
+}
+
 /*
  * 对外暴露的wifi信息
  */
@@ -104,6 +136,8 @@ export type OnWifiConnectedWithPartialInfo = (callback : UniWifiResultCallbackWi
 export type OffWifiConnected = (callback : UniWifiCallback | null) => void
 
 export type OffWifiConnectedWithPartialInfo = (callback : UniWifiResultCallbackWithPartialInfo | null) => void
+
+export type GetWifiGateway = (option : GetWifiGatewayOptions) => void
 
 export type SetWifiList = (option : SetWifiListOptions) => void
 
@@ -422,6 +456,29 @@ interface Uni {
 	 * @autotest { expectCallback: true }
 	 */
 	offWifiConnectedWithPartialInfo(callback : UniWifiResultCallbackWithPartialInfo | null) : void,
+	/**
+	 * 获取当前连接 WiFi 的网关信息
+	 *
+	 * @param {GetWifiGatewayOptions} option
+	 * @uniPlatform {
+	 *    "app": {
+	 *        "android": {
+	 *            "osVer": "4.4.4",
+	 *            "uniVer": "3.7.0",
+	 *            "unixVer": "3.9.0"
+	 *        },
+	 *        "ios": {
+	 *            "osVer": "x",
+	 *            "uniVer": "x",
+	 *            "unixVer": "x"
+	 *   	  }
+	 *    }
+	 * }
+	 * @uniVersion 3.7.7
+	 * @uniVueVersion 2,3  //支持的vue版本
+	 * @autotest { before: 'startWifi', after: 'stopWifi' }
+	 */
+	getWifiGateway(option : GetWifiGatewayOptions) : void,
 	/**
 	 * SetWifiList  暂未实现
 	 *

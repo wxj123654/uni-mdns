@@ -2,6 +2,8 @@ import type { Ref } from 'vue'
 
 import { onUnload } from '@dcloudio/uni-app'
 import { ref } from 'vue'
+// @ts-expect-error uts编译
+import { getWifiGateway } from '@/uni_modules/uni-wifi'
 
 export interface WifiLog {
   time: string
@@ -21,6 +23,26 @@ export interface WifiInfo {
   frequency?: number
 }
 
+/**
+ * Wi-Fi 网关信息类型（对应 uni-wifi 模块的 UniWifiGatewayInfo）
+ */
+export interface WifiGatewayInfo {
+  /** 网关地址 */
+  gateway: string
+  /** 子网掩码 */
+  netmask?: string
+  /** DNS 服务器1 */
+  dns1?: string
+  /** DNS 服务器2 */
+  dns2?: string
+  /** 服务器地址 */
+  serverAddress?: string
+  /** 本机 IP 地址 */
+  ipAddress?: string
+  /** 租约时长(秒) */
+  leaseDuration?: number
+}
+
 export interface UseWifiOptions {
   /** 最大日志条数，默认 50 */
   maxLogs?: number
@@ -37,6 +59,8 @@ export interface UseWifiReturn {
   wifiList: Ref<WifiInfo[]>
   /** 当前连接的 Wi-Fi */
   connectedWifi: Ref<WifiInfo | null>
+  /** 网关信息 */
+  gatewayInfo: Ref<WifiGatewayInfo | null>
   /** 日志列表 */
   logs: Ref<WifiLog[]>
   /** 初始化 Wi-Fi 模块 */
@@ -49,6 +73,8 @@ export interface UseWifiReturn {
   connectWifi: (SSID: string, password: string, maunal?: boolean) => Promise<void>
   /** 获取当前连接的 Wi-Fi */
   getConnectedWifi: (partialInfo?: boolean) => Promise<WifiInfo | null>
+  /** 获取网关信息 */
+  getWifiGateway: () => Promise<WifiGatewayInfo | null>
   /** 清空 Wi-Fi 列表 */
   clearWifiList: () => void
   /** 清空日志 */
@@ -99,6 +125,7 @@ export default function useWifi(options: UseWifiOptions = {}): UseWifiReturn {
   const initialized = ref(false)
   const wifiList = ref<WifiInfo[]>([])
   const connectedWifi = ref<WifiInfo | null>(null)
+  const gatewayInfo = ref<WifiGatewayInfo | null>(null)
   const logs = ref<WifiLog[]>([])
 
   // 添加日志
@@ -247,6 +274,38 @@ export default function useWifi(options: UseWifiOptions = {}): UseWifiReturn {
     })
   }
 
+  // 获取网关信息
+  function getWifiGatewayFn(): Promise<WifiGatewayInfo | null> {
+    return new Promise((resolve, reject) => {
+      if (!initialized.value) {
+        const error = new Error('Wi-Fi 模块未初始化')
+        addLog('错误: Wi-Fi 模块未初始化', 'error')
+        reject(error)
+        return
+      }
+
+      addLog('获取网关信息...')
+
+      getWifiGateway({
+        success: (res) => {
+          if (res.gatewayInfo) {
+            gatewayInfo.value = res.gatewayInfo
+            addLog(`网关: ${res.gatewayInfo.gateway}`, 'success')
+          }
+          else {
+            gatewayInfo.value = null
+            addLog('无法获取网关信息', 'info')
+          }
+          resolve(res.gatewayInfo)
+        },
+        fail: (err) => {
+          addLog(`获取网关失败: ${err.errMsg}`, 'error')
+          reject(new Error(err.errMsg))
+        },
+      })
+    })
+  }
+
   // 清空 Wi-Fi 列表
   function clearWifiList() {
     wifiList.value = []
@@ -334,12 +393,14 @@ export default function useWifi(options: UseWifiOptions = {}): UseWifiReturn {
     initialized,
     wifiList,
     connectedWifi,
+    gatewayInfo,
     logs,
     startWifi: startWifiFn,
     stopWifi: stopWifiFn,
     getWifiList: getWifiListFn,
     connectWifi: connectWifiFn,
     getConnectedWifi: getConnectedWifiFn,
+    getWifiGateway: getWifiGatewayFn,
     clearWifiList,
     clearLogs,
     addLog,

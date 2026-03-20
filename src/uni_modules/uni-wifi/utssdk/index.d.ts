@@ -63,6 +63,30 @@ declare namespace UniNamespace {
 
   type UniWifiResultCallbackWithPartialInfo = (wifiInfo:UniWifiInfoWithPartialInfo) => void
 
+  // WiFi 网关信息相关类型
+  interface UniWifiGatewayInfo {
+    gateway: string;
+    netmask?: string;
+    dns1?: string;
+    dns2?: string;
+    serverAddress?: string;
+    ipAddress?: string;
+    leaseDuration?: number;
+  }
+
+  interface UniWifiGatewayResult {
+    errCode: number;
+    errSubject: string;
+    errMsg: string;
+    gatewayInfo: UniWifiGatewayInfo | null;
+  }
+
+  interface GetWifiGatewayOptions {
+    success?: (res: UniWifiGatewayResult) => void;
+    fail?: (err: UniWifiFail) => void;
+    complete?: (res: any) => void;
+  }
+
 }
 
 declare interface Uni {
@@ -383,6 +407,30 @@ declare interface Uni {
    * }
    */
   setWifiList(option : UniNamespace.WifiOption) : void,
+
+  /**
+   * 获取当前连接 WiFi 的网关信息
+   *
+   * @param {GetWifiGatewayOptions} option
+   * @tutorial https://uniapp.dcloud.net.cn/api/system/wifi.html#getwifigateway
+   * @uniPlatform {
+   *    "app": {
+   *        "android": {
+   *            "osVer": "4.4.4",
+   *            "uniVer": "3.7.0",
+   *            "unixVer": "3.9.0"
+   *        },
+   *        "ios": {
+   *            "osVer": "x",
+   *            "uniVer": "x",
+   *            "unixVer": "x"
+   *   	  }
+   *    }
+   * }
+   * @uniVersion 3.7.7
+   * @uniVueVersion 2,3
+   */
+  getWifiGateway(option: UniNamespace.GetWifiGatewayOptions): void,
 
 
 }

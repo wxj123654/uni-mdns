@@ -3,8 +3,8 @@ import { CaptiveNetwork, kCNNetworkInfoKeySSID, kCNNetworkInfoKeyBSSID } from 'S
 import { NSArray, NSDictionary } from 'Foundation';
 import { CFString } from 'CoreFoundation';
 import { UIDevice } from 'UIKit';
-import { UniWifiResultCallbackWithPartialInfo, UniGetWifiListCallback, UniWifiResultCallback, WifiConnectOption, GetConnectedWifiOptions, UniWifiInfo, UniWifiResult, UniWifiCallback, StartWifi, StopWifi, GetWifiList, OnGetWifiList, OffGetWifiList, GetConnectedWifi, ConnectWifi, OnWifiConnected, OnWifiConnectedWithPartialInfo, OffWifiConnected, OffWifiConnectedWithPartialInfo, SetWifiList, 
- StartWifiOptions, StopWifiOptions, GetWifiListOptions, SetWifiListOptions} from "../interface.uts"
+import { UniWifiResultCallbackWithPartialInfo, UniGetWifiListCallback, UniWifiResultCallback, WifiConnectOption, GetConnectedWifiOptions, UniWifiInfo, UniWifiResult, UniWifiCallback, StartWifi, StopWifi, GetWifiList, OnGetWifiList, OffGetWifiList, GetConnectedWifi, ConnectWifi, OnWifiConnected, OnWifiConnectedWithPartialInfo, OffWifiConnected, OffWifiConnectedWithPartialInfo, SetWifiList,
+ StartWifiOptions, StopWifiOptions, GetWifiListOptions, SetWifiListOptions, GetWifiGateway, GetWifiGatewayOptions, UniWifiGatewayResult} from "../interface.uts"
 import { WifiFailImpl, getErrcode } from '../unierror';
 
 /*
@@ -264,6 +264,16 @@ export const offWifiConnectedWithPartialInfo: OffWifiConnectedWithPartialInfo = 
  */
 export const setWifiList: SetWifiList = function (option: SetWifiListOptions) {
   let err = new WifiFailImpl(getErrcode(12001));
+	option.fail?.(err)
+	option.complete?.(err)
+}
+
+/*
+ * 获取当前连接 WiFi 的网关信息
+ * note: iOS 暂不支持此功能
+ */
+export const getWifiGateway: GetWifiGateway = function (option: GetWifiGatewayOptions) {
+	let err = new WifiFailImpl(getErrcode(12001));
 	option.fail?.(err)
 	option.complete?.(err)
 }

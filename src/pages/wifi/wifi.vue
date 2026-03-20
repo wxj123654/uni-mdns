@@ -19,12 +19,14 @@ const {
   initialized,
   wifiList,
   connectedWifi,
+  gatewayInfo,
   logs,
   startWifi,
   stopWifi,
   getWifiList,
   connectWifi,
   getConnectedWifi,
+  getWifiGateway,
   clearWifiList,
   clearLogs,
 } = useWifi({
@@ -101,6 +103,22 @@ async function handleGetConnectedWifi() {
   }
 }
 
+// 获取网关信息
+async function handleGetWifiGateway() {
+  try {
+    const info = await getWifiGateway()
+    if (info) {
+      uni.showToast({ title: `网关: ${info.gateway}`, icon: 'success' })
+    }
+    else {
+      uni.showToast({ title: '无法获取网关信息', icon: 'none' })
+    }
+  }
+  catch (error) {
+    uni.showToast({ title: (error as Error).message, icon: 'none' })
+  }
+}
+
 // 查看 Wi-Fi 详情
 function viewWifiDetail(wifi: WifiInfo) {
   selectedWifi.value = wifi
@@ -162,6 +180,38 @@ function getSignalIcon(strength?: number): string {
           已连接: {{ connectedWifi.SSID }}
         </view>
       </view>
+      <!-- 网关信息 -->
+      <view v-if="gatewayInfo" class="mt-3 rounded bg-gray-50 p-3 text-sm">
+        <view class="mb-2 text-gray-700 font-medium">
+          网络信息
+        </view>
+        <view class="grid grid-cols-2 gap-2 text-xs">
+          <view>
+            <text class="text-gray-500">网关:</text>
+            <text class="ml-1 font-mono">{{ gatewayInfo.gateway || '-' }}</text>
+          </view>
+          <view>
+            <text class="text-gray-500">本机IP:</text>
+            <text class="ml-1 font-mono">{{ gatewayInfo.ipAddress || '-' }}</text>
+          </view>
+          <view>
+            <text class="text-gray-500">子网掩码:</text>
+            <text class="ml-1 font-mono">{{ gatewayInfo.netmask || '-' }}</text>
+          </view>
+          <view>
+            <text class="text-gray-500">DNS1:</text>
+            <text class="ml-1 font-mono">{{ gatewayInfo.dns1 || '-' }}</text>
+          </view>
+          <view>
+            <text class="text-gray-500">DNS2:</text>
+            <text class="ml-1 font-mono">{{ gatewayInfo.dns2 || '-' }}</text>
+          </view>
+          <view>
+            <text class="text-gray-500">服务器:</text>
+            <text class="ml-1 font-mono">{{ gatewayInfo.serverAddress || '-' }}</text>
+          </view>
+        </view>
+      </view>
     </view>
 
     <!-- 操作按钮 -->
@@ -199,6 +249,13 @@ function getSignalIcon(strength?: number): string {
           @click="handleGetConnectedWifi"
         >
           获取当前
+        </button>
+        <button
+          size="mini"
+          :disabled="!initialized"
+          @click="handleGetWifiGateway"
+        >
+          网关信息
         </button>
       </view>
     </view>
